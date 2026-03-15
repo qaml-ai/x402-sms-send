@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { cdpPaymentMiddleware } from "x402-cdp";
 import { stripeApiKeyMiddleware } from "x402-stripe";
-import { extractParams } from "x402-ai";
 import { openapiFromMiddleware } from "x402-openapi";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -10,20 +9,14 @@ const app = new Hono<{ Bindings: Env }>();
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 const MAX_MESSAGE_LENGTH = 1600;
 
-const SYSTEM_PROMPT = `You are a parameter extractor for an SMS sending service.
-Extract the following from the user's message and return JSON:
-- "to": the recipient phone number in E.164 format (e.g. +15551234567). (required)
-- "message": the SMS message body to send. (required)
-
-Return ONLY valid JSON, no explanation.
-Examples:
-- {"to": "+15551234567", "message": "Hello, this is a test message"}
-- {"to": "+442071234567", "message": "Meeting at 3pm tomorrow"}`;
-
 const ROUTES = {
   "POST /": {
-    accepts: [{ scheme: "exact", price: "$0.01", network: "eip155:8453", payTo: "0x0" as `0x${string}` }],
-    description: "Send an SMS message via Twilio. Send {\"input\": \"your request\"}",
+    accepts: [
+      { scheme: "exact", price: "$0.01", network: "eip155:8453", payTo: "0x0" as `0x${string}` },
+      { scheme: "exact", price: "$0.01", network: "eip155:137", payTo: "0x0" as `0x${string}` },
+      { scheme: "exact", price: "$0.01", network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", payTo: "CvraJ4avKPpJNLvMhMH5ip2ihdt85PXvDwfzXdziUxRq" },
+    ],
+    description: "Send an SMS message via Twilio. Send {\"to\": \"+15551234567\", \"message\": \"Hello\"}",
     mimeType: "application/json",
     extensions: {
       bazaar: {
@@ -33,7 +26,8 @@ const ROUTES = {
             method: "POST",
             bodyType: "json",
             body: {
-              input: { type: "string", description: "Describe the SMS to send, including the recipient phone number and message", required: true },
+              to: { type: "string", description: "Recipient phone number in E.164 format (e.g. +15551234567)", required: true },
+              message: { type: "string", description: "The SMS message body to send", required: true },
             },
           },
           output: { type: "json" },
@@ -56,25 +50,20 @@ app.use(stripeApiKeyMiddleware({ serviceName: "sms-send" }));
 app.use(async (c, next) => {
   if (c.get("skipX402")) return next();
   return cdpPaymentMiddleware((env) => ({
-    "POST /": { ...ROUTES["POST /"], accepts: [{ ...ROUTES["POST /"].accepts[0], payTo: env.SERVER_ADDRESS as `0x${string}` }] },
+    "POST /": { ...ROUTES["POST /"], accepts: ROUTES["POST /"].accepts.map((a: any) => ({ ...a, payTo: a.network.startsWith("solana") ? a.payTo : env.SERVER_ADDRESS as `0x${string}` })) },
   }))(c, next);
 });
 
 app.post("/", async (c) => {
-  const body = await c.req.json<{ input?: string }>();
-  if (!body?.input) {
-    return c.json({ error: "Missing 'input' field" }, 400);
+  const body = await c.req.json<{ to?: string; message?: string }>();
+  if (!body?.to) {
+    return c.json({ error: "Missing 'to' field. Provide a phone number in E.164 format (e.g. +15551234567)" }, 400);
+  }
+  if (!body?.message) {
+    return c.json({ error: "Missing 'message' field" }, 400);
   }
 
-  const params = await extractParams(c.env.CF_GATEWAY_TOKEN, SYSTEM_PROMPT, body.input);
-
-  const to = params.to as string | undefined;
-  const message = params.message as string | undefined;
-
-  // Validate 'to' field
-  if (!to || typeof to !== "string") {
-    return c.json({ error: "Could not extract recipient phone number from your input" }, 400);
-  }
+  const to = body.to.trim();
   if (!E164_REGEX.test(to)) {
     return c.json(
       { error: "Invalid phone number format. Must be E.164 (e.g. +15551234567)" },
@@ -82,9 +71,9 @@ app.post("/", async (c) => {
     );
   }
 
-  // Validate 'message' field
-  if (!message || typeof message !== "string") {
-    return c.json({ error: "Could not extract message text from your input" }, 400);
+  const message = body.message.trim();
+  if (!message) {
+    return c.json({ error: "Message cannot be empty" }, 400);
   }
   if (message.length > MAX_MESSAGE_LENGTH) {
     return c.json(
@@ -142,7 +131,7 @@ app.get("/.well-known/openapi.json", openapiFromMiddleware("x402 SMS Send", "sms
 app.get("/", (c) => {
   return c.json({
     service: "x402-sms-send",
-    description: 'Send SMS messages via Twilio. Send POST / with {"input": "send hello to +15551234567"}',
+    description: 'Send SMS messages via Twilio. Send POST / with {"to": "+15551234567", "message": "Hello"}',
     price: "$0.01 per request (Base mainnet)",
   });
 });
