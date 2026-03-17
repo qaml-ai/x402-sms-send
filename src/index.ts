@@ -129,10 +129,8 @@ app.post("/", async (c) => {
 app.get("/.well-known/openapi.json", openapiFromMiddleware("x402 SMS Send", "sms.camelai.io", ROUTES));
 
 app.get("/", (c) => {
-  return c.json({
-    service: "x402-sms-send",
-    description: 'Send SMS messages via Twilio. Send POST / with {"to": "+15551234567", "message": "Hello"}',
-    price: "$0.01 per request (Base mainnet)",
+  return new Response('# sms.camelai.io \\u2014 SMS Send\n\nSend SMS messages.\n\nPart of [camelai.io](https://camelai.io).\n\n## API\n\n\\`POST /\\` \\u2014 $0.01 per request\n\n**Body:** `{"to": "+15551234567", "message": "Hello"}`\n\n**Response:** JSON with delivery status\n\n## Payment\n\nAccepts USDC on Base, Polygon, or Solana via x402. Or use a Stripe API key (\\`Authorization: Bearer sk_camel_...\\`).\n\nSee [camelai.io](https://camelai.io) for payment setup and full service list.', {
+    headers: { "Content-Type": "text/markdown; charset=utf-8" },
   });
 });
 
